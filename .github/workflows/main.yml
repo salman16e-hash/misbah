@@ -1,0 +1,120 @@
+name: ULTIMATE APK BUILDER (All Fixes)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34'
+
+      - name: Accept Android Licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Download and Setup Gradle 8.0
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.0-bin.zip
+          unzip -q gradle-8.0-bin.zip
+          echo "$(pwd)/gradle-8.0/bin" >> $GITHUB_PATH
+
+      - name: Unzip and Prepare Project
+        run: |
+          rm -rf app gradle build .gradle build.gradle settings.gradle gradlew* 2>/dev/null || true
+          ZIP_FILE=$(ls *.zip | head -1)
+          echo "Found ZIP: $ZIP_FILE"
+          unzip -q "$ZIP_FILE" -d extracted
+          if [ -d "extracted/app" ]; then
+            cp -r extracted/* .
+          else
+            cp -r extracted/* .
+          fi
+          rm -rf extracted "$ZIP_FILE"
+
+      - name: FIX MISSING RESOURCES (XML & Icons)
+        run: |
+          mkdir -p app/src/main/res/xml
+          
+          cat > app/src/main/res/xml/data_extraction_rules.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <data-extraction-rules>
+              <cloud-backup>
+                  <include domain="sharedpref" path="." />
+                  <include domain="database" path="." />
+                  <include domain="file" path="." />
+                  <exclude domain="sharedpref" path="device_prefs.xml" />
+              </cloud-backup>
+          </data-extraction-rules>
+          EOF
+
+          cat > app/src/main/res/xml/backup_rules.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <full-backup-content>
+              <include domain="sharedpref" path="." />
+              <include domain="database" path="." />
+              <include domain="file" path="." />
+          </full-backup-content>
+          EOF
+
+          for res in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            mkdir -p app/src/main/res/$res
+            curl -sL https://github.com/google/material-design-icons/raw/master/png/android/ic_launcher_round/mipmap-mdpi/ic_launcher_round.png -o app/src/main/res/$res/ic_launcher.png
+            curl -sL https://github.com/google/material-design-icons/raw/master/png/android/ic_launcher_round/mipmap-mdpi/ic_launcher_round.png -o app/src/main/res/$res/ic_launcher_round.png
+          done
+
+      - name: Fix textStyle error in item_file_list.xml
+        run: |
+          find app/src/main/res -name "item_file_list.xml" -exec sed -i 's/android:textStyle="medium"/android:textStyle="normal"/g' {} \;
+
+      - name: Create missing layout file dialog_rename.xml
+        run: |
+          mkdir -p app/src/main/res/layout
+          cat > app/src/main/res/layout/dialog_rename.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:orientation="vertical"
+              android:padding="16dp">
+
+              <com.google.android.material.textfield.TextInputLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:hint="New name">
+
+                  <com.google.android.material.textfield.TextInputEditText
+                      android:id="@+id/editTextName"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:inputType="text"
+                      android:maxLines="1" />
+
+              </com.google.android.material.textfield.TextInputLayout>
+
+          </LinearLayout>
+          EOF
+
+      - name: Build Debug APK with Gradle 8.0
+        run: |
+          gradle -v
+          gradle assembleDebug --stacktrace
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FolderCam-Manager
+          path: app/build/outputs/apk/debug/*.apk
